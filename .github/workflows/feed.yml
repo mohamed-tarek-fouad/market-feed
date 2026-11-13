@@ -2,12 +2,12 @@ name: price-feed
 
 # Fetches Binance candles for Claude's market read and publishes them to the
 # `data` branch (latest.json + status.json).
-# - Every 5 minutes (at :01, :06, :11 ...) it refreshes the prices on its own,
+# - Every 5 minutes it refreshes the prices on its own,
 #   so a scheduled read can use them without any GitHub login (public repo).
 # - A push to the `request` branch asks for fresh prices right now.
 on:
   schedule:
-    - cron: "1-59/5 * * * *"
+    - cron: "*/5 * * * *"
   push:
     branches: [request]
   workflow_dispatch:
