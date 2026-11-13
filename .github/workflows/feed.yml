@@ -1,26 +1,45 @@
 name: price-feed
 
 # Fetches Binance candles for Claude's market read and publishes them to the
-# `data` branch (latest.json + status.json).
-# - Every 5 minutes it refreshes the prices on its own,
-#   so a scheduled read can use them without any GitHub login (public repo).
-# - A push to the `request` branch asks for fresh prices right now.
+# `data` branch (latest.json + status.json), so scheduled reads can download
+# them without any GitHub login (public repo).
+#
+# Every 5 minutes: GitHub's own cron schedule has been unreliable (often hours
+# late or skipped), so each run also starts the next one. The next run waits
+# 4 minutes in the `pacing` environment (a wait timer, no runner in use) and
+# then fetches. Only one such chain is kept alive; the schedule restarts it if
+# it ever stops, and a push to the `request` branch fetches immediately.
 on:
   schedule:
     - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
   push:
     branches: [request]
   workflow_dispatch:
+    inputs:
+      chain:
+        description: "Started by the previous run (waits 4 minutes first)"
+        required: false
+        default: "no"
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: price-feed
   cancel-in-progress: false
 
 jobs:
+  pace:
+    if: github.event_name == 'workflow_dispatch' && inputs.chain == 'yes'
+    runs-on: ubuntu-latest
+    environment: pacing
+    steps:
+      - run: echo "Waited for the pacing timer"
+
   fetch:
+    needs: pace
+    if: ${{ !cancelled() && (needs.pace.result == 'success' || needs.pace.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -51,3 +70,20 @@ jobs:
           git add -A
           git commit -qm "prices $(date -u +%Y-%m-%dT%H:%M:%SZ) ($EVENT)"
           git push -qf "https://x-access-token:${TOKEN}@github.com/${REPO}.git" HEAD:data
+
+      - name: Start the next refresh
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Keep exactly one chain: start the next run only if no other run of
+          # this workflow is already queued, waiting or running.
+          others=$(gh run list -R "$REPO" -w feed.yml -L 20 --json databaseId,status \
+            --jq "[.[] | select(.databaseId != $RUN_ID) | select(.status != \"completed\")] | length")
+          echo "other active runs: $others"
+          if [ "$others" = "0" ]; then
+            gh workflow run feed.yml -R "$REPO" --ref main -f chain=yes
+            echo "next refresh started"
+          fi
