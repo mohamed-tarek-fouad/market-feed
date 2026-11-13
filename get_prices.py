@@ -102,7 +102,19 @@ def main():
         else:
             note = f"GitHub did not answer within {a.wait}s"
     else:
+        # No push access (a scheduled read without a GitHub login): wait for the
+        # workflow's own 5-minute run to publish prices that include the 15m
+        # candle that just closed.
+        need = t_req - t_req % (15 * 60 * 1000)
+        deadline = time.time() + a.wait
         status, latest = read_data(a.repo)
+        while (not latest or latest.get("server_time", 0) < need) and time.time() < deadline:
+            time.sleep(10)
+            status, latest = read_data(a.repo)
+        if latest and latest.get("server_time", 0) >= need:
+            save(a.out, latest)
+            print(f"OK prices from {hhmm(latest['server_time'])} (scheduled copy; {note})")
+            return 0
 
     if latest and latest.get("server_time"):
         age = (now_ms() - latest["server_time"]) // 1000
