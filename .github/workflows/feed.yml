@@ -2,14 +2,16 @@ name: price-feed
 
 # Fetches Binance candles for Claude's market read and publishes them to the
 # `data` branch (latest.json + status.json).
-# - A push to the `request` branch asks for fresh prices right now (each read does this).
-# - The schedule keeps a recent copy as a backup.
+# Each read pushes to the `request` branch to ask for fresh prices right now.
+# No schedule: the repo is private, and 48 runs a day (about 1,440 Actions
+# minutes a month) already fit the free 2,000. If the repo is made public,
+# a backup schedule can be added for free:
+#   schedule:
+#     - cron: "7,22,37,52 * * * *"
 on:
   push:
     branches: [request]
   workflow_dispatch:
-  schedule:
-    - cron: "7,22,37,52 * * * *"
 
 permissions:
   contents: write
