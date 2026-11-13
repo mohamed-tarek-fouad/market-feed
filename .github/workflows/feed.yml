@@ -1,0 +1,52 @@
+name: price-feed
+
+# Fetches Binance candles for Claude's market read and publishes them to the
+# `data` branch (latest.json + status.json).
+# - A push to the `request` branch asks for fresh prices right now (each read does this).
+# - The schedule keeps a recent copy as a backup.
+on:
+  push:
+    branches: [request]
+  workflow_dispatch:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: price-feed
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Binance candles
+        env:
+          REQUEST_ID: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          mkdir -p out
+          # keep the last good prices if this fetch fails
+          if git fetch -q --depth=1 origin data 2>/dev/null; then
+            git show FETCH_HEAD:latest.json > out/latest.json 2>/dev/null || rm -f out/latest.json
+          fi
+          python3 feed.py out || echo "::warning::Binance fetch failed; publishing status only"
+
+      - name: Publish to the data branch
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          cd out
+          git init -q -b data
+          git config user.name "market-feed"
+          git config user.email "market-feed@users.noreply.github.com"
+          git add -A
+          git commit -qm "prices $(date -u +%Y-%m-%dT%H:%M:%SZ) ($EVENT)"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${REPO}.git" HEAD:data
